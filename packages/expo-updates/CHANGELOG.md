@@ -4,6 +4,8 @@
 
 ### 🛠 Breaking changes
 
+- Use an explicit development or production mode when Expo Updates commands load app config.
+
 ### 🎉 New features
 
 ### 🐛 Bug fixes
