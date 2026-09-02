@@ -21,13 +21,13 @@
 
 ### 🐛 Bug fixes
 
-- Use the same mode for env loading and bundling with custom Xcode configurations. ([#49555](https://github.com/expo/expo/pull/49555) by [@ramonclaudio](https://github.com/ramonclaudio))
 - Fix `getApplicationIdAsync` and `setPackageInBuildGradle` failing with the Gradle assignment syntax (`applicationId = '...'`). ([#47711](https://github.com/expo/expo/pull/47711) by [@idoyana](https://github.com/idoyana))
 - [iOS] Quote and escape keys and values written to `.strings` files. ([#49605](https://github.com/expo/expo/pull/49605) by [@jakex7](https://github.com/jakex7))
 - [iOS] Keep writing `locales` after one that has no `Info.plist` keys. ([#49777](https://github.com/expo/expo/pull/49777) by [@giaBaoJS](https://github.com/giaBaoJS))
 
 ### 💡 Others
 
+- Allow custom Xcode configuration names in `getRunnableSchemesFromXcodeproj`. ([#49555](https://github.com/expo/expo/pull/49555) by [@ramonclaudio](https://github.com/ramonclaudio))
 - [iOS] Documented that `UIRequiresFullScreen` no longer opts an app out of resizing as of iOS 27, and noted it in the iPad multitasking warning. ([#48175](https://github.com/expo/expo/pull/48175) by [@alanjhughes](https://github.com/alanjhughes))
 
 ## 57.0.6 - 2026-07-22
