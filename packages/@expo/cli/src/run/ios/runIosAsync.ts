@@ -5,6 +5,7 @@ import path from 'path';
 
 import { exportEagerAsync } from '../../export/embed/exportEager';
 import * as Log from '../../log';
+import { hasRequiredIOSFilesAsync } from '../../prebuild/clearNativeFolder';
 import { AppleAppIdResolver } from '../../start/platforms/ios/AppleAppIdResolver';
 import { getContainerPathAsync, simctlAsync } from '../../start/platforms/ios/simctl';
 import { resolveBuildCache, uploadBuildCache } from '../../utils/build-cache-providers';
@@ -21,24 +22,45 @@ import { startBundlerAsync } from '../startBundler';
 import * as XcodeBuild from './XcodeBuild';
 import type { Options } from './XcodeBuild.types';
 import { getLaunchInfoForBinaryAsync, launchAppAsync } from './launchApp';
-import { resolveOptionsAsync } from './options/resolveOptions';
+import { resolveNativeBuildOptionsAsync, resolveOptionsAsync } from './options/resolveOptions';
 import { resolveXcodeConfigurationMode } from './options/resolveXcodeConfiguration';
+import { resolveXcodeProject } from './options/resolveXcodeProject';
 import { getValidBinaryPathAsync } from './validateExternalBinary';
 
 export async function runIosAsync(projectRoot: string, options: Options) {
-  const mode = resolveXcodeConfigurationMode(options.configuration);
-  loadEnvFiles(projectRoot, { mode });
-
   assertPlatform();
-
   const install = !!options.install;
-
-  if ((await ensureNativeProjectAsync(projectRoot, { platform: 'ios', install })) && install) {
-    await maybePromptToSyncPodsAsync(projectRoot);
+  const hasNativeProject = await hasRequiredIOSFilesAsync(projectRoot);
+  if (!hasNativeProject) {
+    if (options.scheme && options.configuration === undefined) {
+      throw new CommandError(
+        'BAD_ARGS',
+        'Cannot read a scheme Run configuration before the iOS project exists. Run prebuild first or pass --configuration.'
+      );
+    }
+    loadEnvFiles(projectRoot, {
+      mode: resolveXcodeConfigurationMode(options.configuration),
+    });
+    await ensureNativeProjectAsync(projectRoot, { platform: 'ios', install });
   }
 
+  const nativeOptions = await resolveNativeBuildOptionsAsync(projectRoot, options);
+  const mode = resolveXcodeConfigurationMode(nativeOptions.configuration);
+  if (hasNativeProject) {
+    loadEnvFiles(projectRoot, { mode });
+    if (
+      (await ensureNativeProjectAsync(projectRoot, {
+        platform: 'ios',
+        install,
+      })) &&
+      install
+    ) {
+      await maybePromptToSyncPodsAsync(projectRoot);
+      nativeOptions.xcodeProject = resolveXcodeProject(projectRoot);
+    }
+  }
   // Resolve the CLI arguments into useable options.
-  const props = await profile(resolveOptionsAsync)(projectRoot, options, mode);
+  const props = await profile(resolveOptionsAsync)(projectRoot, options, nativeOptions);
 
   if (props.device) {
     event('device:selected', {

@@ -1,7 +1,6 @@
 import type { BuildCacheProvider } from '@expo/config';
 
 import type { OSType } from '../../start/platforms/ios/simctl';
-import type { EnvironmentMode } from '../../utils/nodeEnv';
 import type { BundlerProps } from '../resolveBundlerProps';
 
 export type XcodeConfiguration = string;
@@ -13,7 +12,7 @@ export type Options = {
   port?: number;
   /** Xcode scheme to build. */
   scheme?: string | boolean;
-  /** Xcode configuration to build. Default `Debug` */
+  /** Xcode configuration to build. Uses an explicit scheme's Run configuration, or `Debug` otherwise. */
   configuration?: XcodeConfiguration;
   /** Should start the bundler dev server. */
   bundler?: boolean;
@@ -46,7 +45,6 @@ export type BuildProps = {
   /** OS type from scheme resolution, used for generic destination when device is null. */
   osType: OSType;
   configuration: XcodeConfiguration;
-  mode: EnvironmentMode;
   /** Disable the initial bundling from the native script. */
   shouldSkipInitialBundling: boolean;
   /** Should use derived data for builds. */

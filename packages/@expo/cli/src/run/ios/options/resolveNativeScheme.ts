@@ -12,6 +12,7 @@ import type { Options, ProjectInfo, XcodeConfiguration } from '../XcodeBuild.typ
 type NativeSchemeProps = {
   name: string;
   osType?: string;
+  type?: string;
 };
 
 export async function resolveNativeSchemePropsAsync(
@@ -30,9 +31,17 @@ export async function promptOrQueryNativeSchemeAsync(
   projectRoot: string,
   { scheme, configuration }: { scheme?: string | boolean; configuration?: XcodeConfiguration }
 ): Promise<NativeSchemeProps | null> {
-  const schemes = IOSConfig.BuildScheme.getRunnableSchemesFromXcodeproj(projectRoot, {
-    configuration,
-  });
+  const schemes: NativeSchemeProps[] = IOSConfig.BuildScheme.getRunnableSchemesFromXcodeproj(
+    projectRoot,
+    {
+      configuration,
+    }
+  );
+  for (const name of IOSConfig.BuildScheme.getSchemesFromXcodeproj(projectRoot)) {
+    if (!schemes.some((scheme) => scheme.name === name)) {
+      schemes.push({ name });
+    }
+  }
 
   if (!schemes.length) {
     throw new CommandError('IOS_MALFORMED', 'No native iOS build schemes found');

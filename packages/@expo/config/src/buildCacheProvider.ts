@@ -17,7 +17,7 @@ type IosRunOptions = {
   port?: number;
   /** Xcode scheme to build. */
   scheme?: string | boolean;
-  /** Xcode configuration to build. Default `Debug` */
+  /** Xcode configuration to build. Uses an explicit scheme's Run configuration, or `Debug` otherwise. */
   configuration?: string;
   /** Should start the bundler dev server. */
   bundler?: boolean;

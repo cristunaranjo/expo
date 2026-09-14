@@ -164,11 +164,14 @@ export function getSourceRoot(projectRoot: string): string {
 
 export function findSchemePaths(projectRoot: string): string[] {
   return withSortedGlobResult(
-    globSync('ios/*.xcodeproj/xcshareddata/xcschemes/*.xcscheme', {
-      absolute: true,
-      cwd: projectRoot,
-      ignore: ignoredPaths,
-    })
+    globSync(
+      'ios/*.{xcodeproj,xcworkspace}/{xcshareddata,xcuserdata/*.xcuserdatad}/xcschemes/*.xcscheme',
+      {
+        absolute: true,
+        cwd: projectRoot,
+        ignore: ignoredPaths,
+      }
+    )
   );
 }
 

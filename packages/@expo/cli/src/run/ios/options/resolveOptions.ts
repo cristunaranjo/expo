@@ -1,9 +1,9 @@
 import { getConfig } from '@expo/config';
+import { IOSConfig } from '@expo/config-plugins';
 
 import type { OSType } from '../../../start/platforms/ios/simctl';
 import { isOSType } from '../../../start/platforms/ios/simctl';
 import { resolveBuildCacheProvider } from '../../../utils/build-cache-providers';
-import type { EnvironmentMode } from '../../../utils/nodeEnv';
 import { profile } from '../../../utils/profile';
 import { resolveBundlerPropsAsync } from '../../resolveBundlerProps';
 import type { BuildProps, Options } from '../XcodeBuild.types';
@@ -15,28 +15,12 @@ import { resolveXcodeProject } from './resolveXcodeProject';
 export async function resolveOptionsAsync(
   projectRoot: string,
   options: Options,
-  mode: EnvironmentMode
+  nativeOptions?: NativeBuildOptions
 ): Promise<BuildProps> {
-  const xcodeProject = resolveXcodeProject(projectRoot);
-
+  const { xcodeProject, scheme, configuration, osType } =
+    nativeOptions ?? (await resolveNativeBuildOptionsAsync(projectRoot, options));
   const bundlerProps = await resolveBundlerPropsAsync(projectRoot, options);
 
-  // Resolve the scheme before the device so we can filter devices based on
-  // whichever scheme is selected (i.e. don't present TV devices if the scheme cannot be run on a TV).
-  const { osType: schemeOsType, name: scheme } = await resolveNativeSchemePropsAsync(
-    projectRoot,
-    options,
-    xcodeProject
-  );
-
-  // Use the configuration or `Debug` if none is provided.
-  const configuration = options.configuration || 'Debug';
-
-  // Normalize the osType from the scheme, defaulting to iOS if not recognized.
-  const osType: OSType = isOSType(schemeOsType) ? (schemeOsType as OSType) : 'iOS';
-
-  // Resolve the device based on the provided device id or prompt
-  // from a list of devices (connected or simulated) that are filtered by the scheme.
   // Returns null when device is "generic" for build-only workflows.
   const device = await profile(resolveDeviceAsync)(options.device, {
     osType,
@@ -44,11 +28,7 @@ export async function resolveOptionsAsync(
     scheme,
     configuration,
   });
-
-  // Generic builds (device=null) are always simulator builds.
-  // Otherwise check if the resolved device is a simulator.
   const isSimulator = device ? isSimulatorDevice(device) : true;
-
   const projectConfig = getConfig(projectRoot);
   const buildCacheProvider = await resolveBuildCacheProvider(
     projectConfig.exp?.buildCacheProvider ?? projectConfig.exp.experiments?.buildCacheProvider,
@@ -60,17 +40,37 @@ export async function resolveOptionsAsync(
 
   return {
     ...bundlerProps,
-    shouldStartBundler: options.configuration === 'Debug' || bundlerProps.shouldStartBundler,
     projectRoot,
     isSimulator,
     xcodeProject,
     device,
     osType,
     configuration,
-    mode,
     shouldSkipInitialBundling,
     buildCache: options.buildCache !== false,
     scheme,
     buildCacheProvider,
   };
+}
+
+type NativeBuildOptions = Pick<BuildProps, 'xcodeProject' | 'scheme' | 'configuration' | 'osType'>;
+
+export async function resolveNativeBuildOptionsAsync(
+  projectRoot: string,
+  options: Options
+): Promise<NativeBuildOptions> {
+  const xcodeProject = resolveXcodeProject(projectRoot);
+
+  // Resolve the scheme before the device so we can filter devices based on
+  // whichever scheme is selected (i.e. don't present TV devices if the scheme cannot be run on a TV).
+  const { name: scheme } = await resolveNativeSchemePropsAsync(projectRoot, options, xcodeProject);
+
+  const { configuration, osType: schemeOsType } =
+    await IOSConfig.BuildScheme.getBuildConfigurationForSchemeAsync(
+      projectRoot,
+      scheme,
+      options.configuration ?? (options.scheme ? undefined : 'Debug')
+    );
+  const osType: OSType = isOSType(schemeOsType) ? schemeOsType : 'iOS';
+  return { xcodeProject, scheme, configuration, osType };
 }

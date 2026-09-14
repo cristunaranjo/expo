@@ -49,7 +49,7 @@ export const expoRunIos: Command = async (argv) => {
         `--no-bundler                     Skip starting the Metro bundler`,
         `--scheme [scheme]                Scheme to build`,
         `--binary <path>                  Path to existing .app or .ipa to install.`,
-        chalk`--configuration <configuration>  Xcode configuration to use. {dim Default: Debug}`,
+        chalk`--configuration <configuration>  Xcode configuration to use. {dim Default: selected scheme's Run configuration, or Debug without --scheme}`,
         chalk`-d, --device [device]            Device name, UDID, or "generic" for build-only`,
         `-o, --output <path>              Directory to output the built app binary`,
         chalk`-p, --port <port>                Port to start the Metro bundler on. {dim Default: 8081}`,

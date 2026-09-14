@@ -1,7 +1,10 @@
-import { readXMLAsync } from '../utils/XML';
+import path from 'path';
+import xcode from 'xcode';
+
+import { readXMLAsync, type XMLObject, type XMLValue } from '../utils/XML';
 import { findSchemeNames, findSchemePaths } from './Paths';
-import { findSignableTargets, TargetType } from './Target';
-import { getPbxproj, unquote } from './utils/Xcodeproj';
+import { findSignableTargets, getNativeTargets, TargetType } from './Target';
+import { getBuildConfigurationForListIdAndName, getPbxproj, unquote } from './utils/Xcodeproj';
 
 interface SchemeXML {
   Scheme?: {
@@ -29,6 +32,116 @@ interface BuildActionEntryType {
 
 export function getSchemesFromXcodeproj(projectRoot: string): string[] {
   return findSchemeNames(projectRoot);
+}
+
+/** Read the selected application's configuration without evaluating Expo config. */
+export async function getBuildConfigurationForSchemeAsync(
+  projectRoot: string,
+  scheme: string,
+  configuration?: string
+): Promise<{ configuration: string; osType: string }> {
+  const schemePaths = findSchemePaths(projectRoot).filter(
+    (file) => path.parse(file).name === scheme
+  );
+  if (schemePaths.length > 1) {
+    throw new Error(`Scheme '${scheme}' is defined in multiple files: ${schemePaths.join(', ')}`);
+  }
+
+  const schemePath = schemePaths[0];
+  let project: xcode.XcodeProject;
+  let targetId: string;
+  if (schemePath) {
+    const xml = await readXMLAsync({ path: schemePath });
+    const schemeXml = getXmlObject(getXmlObject(xml)?.Scheme);
+    const launchAction = getFirstXmlElement(schemeXml, 'LaunchAction');
+    const runConfiguration = getXmlObject(launchAction?.$)?.buildConfiguration;
+    if (configuration === undefined && typeof runConfiguration === 'string') {
+      configuration = runConfiguration;
+    }
+
+    const runnable = getFirstXmlElement(launchAction, 'BuildableProductRunnable');
+    let reference = getFirstXmlElement(runnable, 'BuildableReference');
+    if (!reference) {
+      const buildAction = getFirstXmlElement(schemeXml, 'BuildAction');
+      const entries = getFirstXmlElement(buildAction, 'BuildActionEntries')?.BuildActionEntry;
+      const appReferences = (Array.isArray(entries) ? entries : [])
+        .map((entry) => getFirstXmlElement(getXmlObject(entry), 'BuildableReference'))
+        .filter((entry) => {
+          const name = getXmlObject(entry?.$)?.BuildableName;
+          return typeof name === 'string' && name.endsWith('.app');
+        });
+      if (appReferences.length === 1) {
+        reference = appReferences[0];
+      }
+    }
+
+    const attributes = getXmlObject(reference?.$);
+    const identifier = attributes?.BlueprintIdentifier;
+    const container = attributes?.ReferencedContainer;
+    if (
+      typeof identifier !== 'string' ||
+      typeof container !== 'string' ||
+      !container.startsWith('container:')
+    ) {
+      throw new Error(`Scheme '${scheme}' does not identify an application target`);
+    }
+
+    let schemeContainer = path.dirname(schemePath);
+    while (!['.xcodeproj', '.xcworkspace'].includes(path.extname(schemeContainer))) {
+      const parent = path.dirname(schemeContainer);
+      if (parent === schemeContainer) {
+        throw new Error(`Cannot resolve the container for scheme '${scheme}'`);
+      }
+      schemeContainer = parent;
+    }
+    const projectPath = path.resolve(
+      path.dirname(schemeContainer),
+      container.slice('container:'.length)
+    );
+    project = xcode.project(path.join(projectPath, 'project.pbxproj'));
+    project.parseSync();
+    targetId = identifier;
+  } else {
+    project = getPbxproj(projectRoot);
+    const target = getNativeTargets(project).find(([, target]) => unquote(target.name) === scheme);
+    if (!target) {
+      throw new Error(`Scheme '${scheme}' does not exist in the native project`);
+    }
+    targetId = target[0];
+  }
+
+  if (configuration === undefined) {
+    throw new Error(
+      `Cannot read the Run configuration for scheme '${scheme}'. Save its .xcscheme file or pass --configuration.`
+    );
+  }
+  const target = getNativeTargets(project).find(([id]) => id === targetId)?.[1];
+  if (!target || !unquote(target.productType).startsWith(TargetType.APPLICATION)) {
+    throw new Error(`Scheme '${scheme}' does not identify an application target`);
+  }
+  const [, buildConfiguration] = getBuildConfigurationForListIdAndName(project, {
+    configurationListId: target.buildConfigurationList,
+    buildConfiguration: configuration,
+  });
+  const settings = buildConfiguration.buildSettings;
+  const osType =
+    unquote(target.productType) === TargetType.WATCH
+      ? 'watchOS'
+      : settings.SDKROOT === 'appletvos' || 'TVOS_DEPLOYMENT_TARGET' in settings
+        ? 'tvOS'
+        : settings.SDKROOT === 'xros'
+          ? 'xrOS'
+          : 'iOS';
+  return { configuration, osType };
+}
+
+function getXmlObject(value: XMLValue | undefined): XMLObject | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : undefined;
+}
+
+function getFirstXmlElement(parent: XMLObject | undefined, name: string): XMLObject | undefined {
+  const elements = parent?.[name];
+  return Array.isArray(elements) ? getXmlObject(elements[0]) : undefined;
 }
 
 export function getRunnableSchemesFromXcodeproj(

@@ -1,32 +1,69 @@
+import { getOriginalEnv } from '@expo/env';
 import chalk from 'chalk';
 import fs from 'fs';
 import path from 'path';
 
 import { exportEagerAsync } from '../../export/embed/exportEager';
 import { Log } from '../../log';
+import { hasRequiredAndroidFilesAsync } from '../../prebuild/clearNativeFolder';
 import { assembleAsync, installAsync } from '../../start/platforms/android/gradle';
 import { resolveBuildCache, uploadBuildCache } from '../../utils/build-cache-providers';
 import { CommandError } from '../../utils/errors';
-import { loadEnvFiles } from '../../utils/nodeEnv';
+import { loadEnvFiles, type EnvironmentMode } from '../../utils/nodeEnv';
 import { ensurePortAvailabilityAsync } from '../../utils/port';
 import { getSchemesForAndroidAsync } from '../../utils/scheme';
 import { ensureNativeProjectAsync } from '../ensureNativeProject';
 import { event, debugEvent } from '../events';
 import { logProjectLogsLocation } from '../hints';
 import { startBundlerAsync } from '../startBundler';
+import { resolveBuildModeAsync } from './resolveBuildModeAsync';
 import { resolveInstallApkNameAsync } from './resolveInstallApkName';
 import type { Options, ResolvedOptions } from './resolveOptions';
 import { resolveOptionsAsync } from './resolveOptions';
 
 export async function runAndroidAsync(projectRoot: string, { install, ...options }: Options) {
-  // Guess the mode from the selected native build variant.
-  const isProduction = options.variant?.toLowerCase().endsWith('release');
-  const mode = isProduction ? 'production' : 'development';
+  let variant = options.variant ?? 'debug';
+  if (typeof variant !== 'string' || !variant) {
+    throw new CommandError('BAD_ARGS', '--variant must be a non-empty string');
+  }
+  const hasNativeProject = await hasRequiredAndroidFilesAsync(projectRoot);
+  let generationMode: EnvironmentMode | undefined;
+  if (!options.binary && !hasNativeProject) {
+    if (!/^(debug|debugOptimized|release)$/i.test(variant)) {
+      throw new CommandError(
+        'ANDROID_BUILD_MODE',
+        `Cannot resolve Android variant '${variant}' before the native project exists. Run prebuild first, then run with --variant ${variant}.`
+      );
+    }
+    generationMode = variant.toLowerCase() === 'release' ? 'production' : 'development';
+    process.env = { ...getOriginalEnv(), NODE_ENV: generationMode };
+    loadEnvFiles(projectRoot, { mode: generationMode });
+    await ensureNativeProjectAsync(projectRoot, { platform: 'android', install });
+  }
+
+  // Installing an external binary does not require Gradle or expose its JavaScript build mode.
+  let mode: EnvironmentMode;
+  if (options.binary) {
+    mode = variant.toLowerCase().endsWith('release') ? 'production' : 'development';
+  } else {
+    ({ mode, variant } = await resolveBuildModeAsync(projectRoot, variant));
+    if (generationMode && mode !== generationMode) {
+      throw new CommandError(
+        'ANDROID_BUILD_MODE',
+        `Android variant '${variant}' uses ${mode} according to react.debuggableVariants, but Prebuild used ${generationMode}. Review the generated native configuration, then run again with the intended variant.`
+      );
+    }
+  }
+  options.variant = variant;
+  const isProduction = mode === 'production';
+  process.env = { ...getOriginalEnv(), NODE_ENV: mode };
   loadEnvFiles(projectRoot, {
     mode,
   });
 
-  await ensureNativeProjectAsync(projectRoot, { platform: 'android', install });
+  if (hasNativeProject || options.binary) {
+    await ensureNativeProjectAsync(projectRoot, { platform: 'android', install });
+  }
 
   const props = await resolveOptionsAsync(projectRoot, options);
 
