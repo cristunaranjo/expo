@@ -8,6 +8,11 @@
 
 ### 🐛 Bug fixes
 
+- Load app config and env files in the selected mode when generating native Updates resources. ([#49452](https://github.com/expo/expo/pull/49452) by [@ramonclaudio](https://github.com/ramonclaudio))
+- [iOS] Use production config by default when Updates native debugging embeds production JavaScript. ([#49452](https://github.com/expo/expo/pull/49452) by [@ramonclaudio](https://github.com/ramonclaudio))
+- [Android] Use the app's `react.root` when generating Updates resources. ([#49452](https://github.com/expo/expo/pull/49452) by [@ramonclaudio](https://github.com/ramonclaudio))
+- [Android] Regenerate Updates resources when tracked app config, env, or fingerprint inputs change. ([#49452](https://github.com/expo/expo/pull/49452) by [@ramonclaudio](https://github.com/ramonclaudio))
+
 ### 💡 Others
 
 ## 58.0.3 — 2026-09-14
@@ -36,7 +41,6 @@ _This version does not introduce any user-facing changes._
 
 ### 🐛 Bug fixes
 
-- Load Expo config and env files with the selected config mode during native builds. ([#49452](https://github.com/expo/expo/pull/49452) by [@ramonclaudio](https://github.com/ramonclaudio))
 - [iOS] Fix the embedded manifest recording the wrong `packagerHash` for assets that ship scale variants iOS does not allow (such as `@1.5x` and `@4x`): the hashes were read by the filtered scale index instead of the asset's own, so those images resolved to an empty URI and rendered blank in release builds. ([#48811](https://github.com/expo/expo/pull/48811) by [@expo-bot](https://github.com/expo-bot))
 - [iOS] Fix `expo-dev-client` being detected as installed when it is absent, which enabled `USE_DEV_CLIENT` and printed a `MODULE_NOT_FOUND` trace during `pod install`. ([#49233](https://github.com/expo/expo/pull/49233) by [@dennytosp](https://github.com/dennytosp))
 - [iOS] Set `always_out_of_date` on the `Generate updates resources for expo-updates` script_phase to silence the Xcode "run script phase will run on every build" dependency-analysis warning. ([#47622](https://github.com/expo/expo/pull/47622) by [@ramonclaudio](https://github.com/ramonclaudio))
