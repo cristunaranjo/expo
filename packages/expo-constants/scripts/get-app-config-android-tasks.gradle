@@ -1,0 +1,116 @@
+import org.apache.tools.ant.taskdefs.condition.Os
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import org.gradle.api.artifacts.result.ResolvedComponentResult
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
+import org.gradle.api.artifacts.result.UnresolvedDependencyResult
+import org.gradle.process.ExecOperations
+import org.gradle.work.DisableCachingByDefault
+import javax.inject.Inject
+
+@DisableCachingByDefault(because = 'App config can read files and environment values not tracked by Gradle.')
+abstract class CreateExpoConfig extends DefaultTask {
+  @Inject abstract ExecOperations getExecOperations()
+  @Input abstract Property<String> getProjectRoot()
+  @Input abstract ListProperty<String> getNodeExecutableAndArgs()
+  @Input abstract Property<String> getConfigMode()
+  @InputFile @PathSensitive(PathSensitivity.NONE) abstract RegularFileProperty getConfigScript()
+  @Input abstract Property<Boolean> getUsesConstants()
+  @OutputDirectory abstract DirectoryProperty getAssetDir()
+
+  CreateExpoConfig() {
+    outputs.upToDateWhen { false }
+  }
+
+  @TaskAction
+  void generate() {
+    def output = assetDir.get().asFile
+    output.mkdirs()
+    if (!usesConstants.get()) {
+      def staleConfig = new File(output, 'app.config')
+      if (staleConfig.exists() && !staleConfig.delete()) {
+        throw new GradleException("Cannot remove stale Constants config: $staleConfig")
+      }
+      return
+    }
+    def generateCommand = command([configScript.get().asFile.absolutePath, projectRoot.get(), output.absolutePath])
+    execOperations.exec {
+      workingDir projectRoot.get()
+      environment '__EXPO_CONFIG_MODE', configMode.get()
+      commandLine generateCommand
+    }
+  }
+
+  private List<String> command(List<String> args) {
+    def prefix = Os.isFamily(Os.FAMILY_WINDOWS) ? ['cmd', '/c'] : []
+    return prefix + nodeExecutableAndArgs.get() + args
+  }
+
+  static boolean dependsOnConstants(ResolvedComponentResult root, String constantsPath) {
+    def pending = new ArrayDeque<ResolvedComponentResult>()
+    def seen = new HashSet()
+    pending.add(root)
+    while (!pending.isEmpty()) {
+      def component = pending.removeFirst()
+      if (!seen.add(component.id)) continue
+      if (component.id instanceof ProjectComponentIdentifier &&
+          component.id.build.buildPath == root.id.build.buildPath &&
+          component.id.projectPath == constantsPath) return true
+      component.dependencies.each { dependency ->
+        if (dependency instanceof UnresolvedDependencyResult) throw dependency.failure
+        if (dependency instanceof ResolvedDependencyResult) pending.add(dependency.selected)
+      }
+    }
+    return false
+  }
+}
+
+pluginManager.withPlugin('com.android.application') {
+  pluginManager.withPlugin('com.facebook.react') {
+    def constantsPath = project.property('expoConstantsProjectPath')
+    def scriptPath = project.property('expoConstantsConfigScript')
+    def react = extensions.getByName('react')
+    def androidComponents = extensions.getByName('androidComponents')
+    androidComponents.onVariants(androidComponents.selector().all()) { variant ->
+      def variantName = variant.name
+      def usesConstants = variant.runtimeConfiguration.incoming.resolutionResult.rootComponent.map { root ->
+        CreateExpoConfig.dependsOnConstants(root, constantsPath)
+      }
+      def task = tasks.register("create${variantName.capitalize()}ExpoConfig", CreateExpoConfig) {
+        projectRoot.set(react.root.map { it.asFile.absolutePath })
+        nodeExecutableAndArgs.set(react.nodeExecutableAndArgs)
+        configScript.set(new File(scriptPath))
+        getUsesConstants().set(usesConstants)
+        configMode.set(providers.environmentVariable('__EXPO_CONFIG_MODE').orElse(
+          react.debuggableVariants.map { names ->
+            names.any { it.equalsIgnoreCase(variantName) } ? 'development' : 'production'
+          }
+        ))
+        assetDir.set(layout.buildDirectory.dir("generated/assets/expo-constants/$variantName"))
+      }
+      variant.sources.assets.addGeneratedSourceDirectory(task) { it.assetDir }
+    }
+  }
+}
+
+// Keep library resources for consumers such as Brownfield AARs. Application assets take precedence.
+pluginManager.withPlugin('com.android.library') {
+  def android = extensions.getByName('android')
+  def androidComponents = extensions.getByName('androidComponents')
+  def scriptPath = project.property('expoConstantsConfigScript')
+  androidComponents.onVariants(androidComponents.selector().all()) { variant ->
+    def expoGradleExtension = gradle.extensions.findByName('expoGradle')
+    def configRoot = expoGradleExtension?.projectRoot ?: rootProject.projectDir
+    def nativeDevelopment = android.buildTypes.getByName(variant.buildType).debuggable
+    def task = tasks.register("create${variant.name.capitalize()}ExpoConfig", CreateExpoConfig) {
+      projectRoot.set(configRoot.absolutePath)
+      nodeExecutableAndArgs.set(['node'])
+      configScript.set(new File(scriptPath))
+      usesConstants.set(true)
+      configMode.set(providers.environmentVariable('__EXPO_CONFIG_MODE').orElse(
+        nativeDevelopment ? 'development' : 'production'
+      ))
+      assetDir.set(layout.buildDirectory.dir("generated/assets/expo-constants/${variant.name}"))
+    }
+    variant.sources.assets.addGeneratedSourceDirectory(task) { it.assetDir }
+  }
+}

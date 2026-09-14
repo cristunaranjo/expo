@@ -1,3 +1,4 @@
+import { getOriginalEnv } from '@expo/env';
 import spawnAsync from '@expo/spawn-async';
 import chalk from 'chalk';
 import fs from 'fs';
@@ -10,7 +11,7 @@ import { getContainerPathAsync, simctlAsync } from '../../start/platforms/ios/si
 import { resolveBuildCache, uploadBuildCache } from '../../utils/build-cache-providers';
 import { maybePromptToSyncPodsAsync } from '../../utils/cocoapods';
 import { CommandError } from '../../utils/errors';
-import { loadEnvFiles } from '../../utils/nodeEnv';
+import { type EnvironmentMode, loadEnvFiles } from '../../utils/nodeEnv';
 import { ensurePortAvailabilityAsync } from '../../utils/port';
 import { profile } from '../../utils/profile';
 import { getSchemesForIosAsync } from '../../utils/scheme';
@@ -25,7 +26,8 @@ import { resolveOptionsAsync } from './options/resolveOptions';
 import { getValidBinaryPathAsync } from './validateExternalBinary';
 
 export async function runIosAsync(projectRoot: string, options: Options) {
-  const mode = options.configuration === 'Release' ? 'production' : 'development';
+  let mode: EnvironmentMode = options.configuration === 'Release' ? 'production' : 'development';
+  const defaultBabelEnv = process.env.BABEL_ENV ? undefined : mode;
   loadEnvFiles(projectRoot, { mode });
 
   assertPlatform();
@@ -93,8 +95,20 @@ export async function runIosAsync(projectRoot: string, options: Options) {
       options.binary = binaryPath;
     }
 
+    const possibleBundleOutput = path.join(options.binary, 'main.jsbundle');
+    const shouldRebundle = fs.existsSync(possibleBundleOutput);
+    if (shouldRebundle) {
+      mode = 'production';
+      process.env = { ...getOriginalEnv(), NODE_ENV: mode };
+      if (defaultBabelEnv && process.env.BABEL_ENV === defaultBabelEnv) {
+        delete process.env.BABEL_ENV;
+      }
+      loadEnvFiles(projectRoot, { mode });
+    }
+    const configMode =
+      !shouldRebundle && props.configuration.includes('Debug') ? 'development' : 'production';
+
     Log.log('Rebundling the Expo config file');
-    // Re-bundle the config file the same way the app was originally bundled.
     await spawnAsync(
       'node',
       [
@@ -107,19 +121,19 @@ export async function runIosAsync(projectRoot: string, options: Options) {
       ],
       {
         env: {
-          ...process.env,
-          __EXPO_CONFIG_MODE: mode,
+          ...getOriginalEnv(),
+          NODE_ENV: process.env.NODE_ENV,
+          __EXPO_CONFIG_MODE: process.env.__EXPO_CONFIG_MODE ?? configMode,
         },
       }
     );
     // Re-bundle the app.
 
-    const possibleBundleOutput = path.join(options.binary, 'main.jsbundle');
-
-    if (fs.existsSync(possibleBundleOutput)) {
+    if (shouldRebundle) {
       Log.log('Rebundling the app...');
       await exportEagerAsync(projectRoot, {
-        resetCache: false,
+        // Cached production transforms may contain values from an earlier environment.
+        resetCache: true,
         dev: false,
         platform: 'ios',
         assetsDest: path.join(options.binary, 'assets'),

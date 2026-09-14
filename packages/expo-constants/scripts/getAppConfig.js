@@ -25,7 +25,7 @@ const expoEnv = require('@expo/env');
 process.env = expoEnv.getOriginalEnv();
 const mode = expoEnv.consumeConfigEnvMode();
 if (!mode) {
-  throw new Error('Must provide a config mode');
+  throw new Error('Must provide __EXPO_CONFIG_MODE as "development" or "production"');
 }
 expoEnv.logLoadedEnv(expoEnv.loadProjectEnv(projectRoot, { mode }));
 process.chdir(projectRoot);

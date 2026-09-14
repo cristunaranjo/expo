@@ -6,18 +6,6 @@ DEST="$CONFIGURATION_BUILD_DIR"
 RESOURCE_BUNDLE_NAME="EXConstants.bundle"
 EXPO_CONSTANTS_PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
-is_debug_configuration() {
-  [[ "$1" == *Debug* ]]
-}
-
-if [[ -n "$__EXPO_CONFIG_MODE" ]]; then
-  CONFIG_MODE="$__EXPO_CONFIG_MODE"
-elif is_debug_configuration "$CONFIGURATION"; then
-  CONFIG_MODE="development"
-else
-  CONFIG_MODE="production"
-fi
-
 # For classic main project build phases integration, will be no-op to prevent duplicated app.config creation.
 #
 # `$PROJECT_DIR` is passed by Xcode as the directory to the xcodeproj file.
@@ -26,6 +14,30 @@ fi
 PROJECT_DIR_BASENAME=$(basename "$PROJECT_DIR")
 if [ "x$PROJECT_DIR_BASENAME" != "xPods" ]; then
   exit 0
+fi
+
+# Native debugging configures the bundle through these files. Match the app bundle phase's order.
+if [[ -f "$PODS_ROOT/../.xcode.env.updates" ]]; then
+  # The bundle phase does not enable errexit or pipefail while sourcing environment files.
+  set +eo pipefail
+  for EXPO_CONSTANTS_XCODE_ENV_FILE in \
+    "$PODS_ROOT/../.xcode.env" \
+    "$PODS_ROOT/../.xcode.env.local" \
+    "$PODS_ROOT/../.xcode.env.updates" \
+    "$PODS_ROOT/../.xcode.env.local"; do
+    if [[ -f "$EXPO_CONSTANTS_XCODE_ENV_FILE" ]]; then
+      source "$EXPO_CONSTANTS_XCODE_ENV_FILE"
+    fi
+  done
+  set -eo pipefail
+fi
+
+if [[ -n "${__EXPO_CONFIG_MODE+x}" ]]; then
+  CONFIG_MODE="$__EXPO_CONFIG_MODE"
+elif [[ "$CONFIGURATION" == *Debug* ]]; then
+  CONFIG_MODE="development"
+else
+  CONFIG_MODE="production"
 fi
 
 # If PROJECT_ROOT is not specified, fallback to use Xcode PROJECT_DIR
