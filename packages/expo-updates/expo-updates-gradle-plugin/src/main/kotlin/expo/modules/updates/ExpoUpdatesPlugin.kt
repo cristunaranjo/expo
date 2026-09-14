@@ -6,15 +6,24 @@ import org.apache.tools.ant.taskdefs.condition.Os
 import org.gradle.api.DefaultTask
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.ConfigurableFileTree
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.model.ObjectFactory
 import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputFiles
+import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
 import org.slf4j.LoggerFactory
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Locale
 import javax.inject.Inject
@@ -25,37 +34,58 @@ abstract class ExpoUpdatesPlugin : Plugin<Project> {
       logger.warn("Stop expo-updates resource generation because ReactExtension is not registered")
       return
     }
-    val entryFile = detectedEntryFile(reactExtension)
+
     val androidComponents = project.extensions.getByType(AndroidComponentsExtension::class.java)
 
-    val nativeDebuggingEnabled = isNativeDebuggingEnabled(project)
-    if (nativeDebuggingEnabled) {
+    if (isNativeDebuggingEnabled(project)) {
       logger.warn("Disable all react.debuggableVariants because EX_UPDATES_NATIVE_DEBUG=1")
       reactExtension.debuggableVariants.set(listOf())
     }
 
+    val updatesPackageDirectory by lazy {
+      project.providers.exec {
+        val args = reactExtension.nodeExecutableAndArgs.get() + listOf("--print", "require('path').dirname(require.resolve('expo-updates/package.json'))")
+        it.commandLine(if (Os.isFamily(Os.FAMILY_WINDOWS)) listOf("cmd", "/c") + args else args)
+        it.workingDir(reactExtension.root.get().asFile)
+      }.standardOutput.asText.map { it.trim() }
+    }
+
     androidComponents.onVariants(androidComponents.selector().all()) { variant ->
       val targetName = variant.name.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
-      val projectRoot = project.rootProject.projectDir.parentFile.toPath()
-      val isDebuggableVariant =
-        reactExtension.debuggableVariants.get().any { it.equals(variant.name, ignoreCase = true) }
-      val isDevelopmentBuild = isDevelopmentBuild(
-        buildType = variant.buildType,
-        isDebuggableVariant = isDebuggableVariant,
-        nativeDebuggingEnabled = nativeDebuggingEnabled
-      )
+      val isDebuggableVariant = isDebuggableVariant(variant.name, reactExtension.debuggableVariants.get())
       val configMode = getConfigMode(
         inheritedMode = System.getenv("__EXPO_CONFIG_MODE"),
-        isDevelopmentBuild = isDevelopmentBuild
+        isDebuggableVariant = isDebuggableVariant
       )
+      val projectWorkflow = project.providers.exec {
+        val args = reactExtension.nodeExecutableAndArgs.get() + listOf(
+          "${updatesPackageDirectory.get()}/utils/build/resolveWorkflowForBuild.js",
+          reactExtension.root.get().asFile.absolutePath
+        )
+        it.commandLine(if (Os.isFamily(Os.FAMILY_WINDOWS)) listOf("cmd", "/c") + args else args)
+        it.environment("__EXPO_CONFIG_MODE", configMode)
+        it.workingDir(reactExtension.root.get().asFile)
+      }.standardOutput.asText.map { output ->
+        output.trim().also { require(it in listOf("managed", "generic", "overridden")) { "Invalid Expo Updates workflow: $it" } }
+      }
 
       val createUpdatesResourcesTask = project.tasks.register("create${targetName}UpdatesResources", CreateUpdatesResourcesTask::class.java) {
         it.description = "expo-updates: Create updates resources for ${targetName}."
-        it.projectRoot.set(projectRoot.toString())
-        it.nodeExecutableAndArgs.set(reactExtension.nodeExecutableAndArgs.get())
+        it.projectRoot.set(reactExtension.root.map { directory -> directory.asFile.absolutePath })
+        it.nodeExecutableAndArgs.set(reactExtension.nodeExecutableAndArgs)
         it.debuggableVariant.set(isDebuggableVariant)
         it.configMode.set(configMode)
-        it.entryFile.set(entryFile.toPath().toString())
+        it.entryFile.set(detectedEntryFile(reactExtension).absolutePath)
+        it.updatesPackageDirectory.set(updatesPackageDirectory)
+        it.projectWorkflow.set(projectWorkflow)
+        it.resourceEnvironment.set(project.providers.environmentVariablesPrefixedBy("EXPO_").map(::hashResourceEnvironment))
+        for (name in listOf("PATH", "NODE_PATH", "NODE_OPTIONS", "BABEL_ENV")) {
+          it.resourceEnvironment.put(name, project.providers.environmentVariable(name)
+            .map { value -> hashResourceEnvironment(mapOf(name to value)).getValue(name) }.orElse("unset"))
+        }
+        it.inheritedDotenvMarker.set(project.providers.environmentVariable("__EXPO_ENV_LOADED").orElse(""))
+        it.excludedOutputDirectories.from(project.rootProject.allprojects.map { subproject -> subproject.layout.buildDirectory })
+        it.fingerprintInputFile.set(project.layout.buildDirectory.file("intermediates/expo-updates/${variant.name}/fingerprint-inputs.json"))
       }
       variant.sources.assets?.addGeneratedSourceDirectory(createUpdatesResourcesTask, CreateUpdatesResourcesTask::assetDir)
     }
@@ -64,6 +94,9 @@ abstract class ExpoUpdatesPlugin : Plugin<Project> {
   abstract class CreateUpdatesResourcesTask : DefaultTask() {
     @get:Inject
     abstract val execOperations: ExecOperations
+
+    @get:Inject
+    abstract val objects: ObjectFactory
 
     @get:Input
     abstract val projectRoot: Property<String>
@@ -80,6 +113,52 @@ abstract class ExpoUpdatesPlugin : Plugin<Project> {
     @get:Input
     abstract val entryFile: Property<String>
 
+    @get:Internal
+    abstract val updatesPackageDirectory: Property<String>
+
+    @get:Input
+    abstract val projectWorkflow: Property<String>
+
+    @get:Input
+    abstract val resourceEnvironment: MapProperty<String, String>
+
+    @get:Input
+    abstract val inheritedDotenvMarker: Property<String>
+
+    @get:Internal
+    val excludedOutputDirectories: ConfigurableFileCollection = objects.fileCollection()
+
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    val sourceFiles: ConfigurableFileTree
+      get() = resourceFileTree(objects, File(projectRoot.get()), excludedOutputDirectories.files)
+
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.ABSOLUTE)
+    val dependencyFiles: ConfigurableFileCollection
+      get() {
+        val sources = readFingerprintInputPaths(fingerprintInputFile.get().asFile)
+        return objects.fileCollection().from(
+          sources.files,
+          sources.directories.map { resourceFileTree(objects, it, excludedOutputDirectories.files) },
+          ancestorPackageFiles(File(projectRoot.get())),
+          File(entryFile.get())
+        )
+      }
+
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    val resourceScriptFiles: ConfigurableFileTree
+      get() = objects.fileTree().setDir(File(updatesPackageDirectory.get(), "utils/build"))
+
+    @get:Input
+    val dependencyDirectoryState: Map<String, Boolean>
+      get() = readFingerprintInputPaths(fingerprintInputFile.get().asFile).directories
+        .associate { it.absolutePath to it.isDirectory }
+
+    @get:OutputFile
+    abstract val fingerprintInputFile: RegularFileProperty
+
     @get:OutputDirectory
     abstract val assetDir: DirectoryProperty
 
@@ -87,7 +166,7 @@ abstract class ExpoUpdatesPlugin : Plugin<Project> {
     fun exec() {
       assetDir.get().asFile.deleteRecursively()
       assetDir.get().asFile.mkdirs()
-      val expoUpdatesDir = getExpoUpdatesPackageDir()
+      val expoUpdatesDir = updatesPackageDirectory.get()
       execOperations.exec {
         val args = mutableListOf<String>().apply {
           addAll(nodeExecutableAndArgs.get())
@@ -98,6 +177,7 @@ abstract class ExpoUpdatesPlugin : Plugin<Project> {
           add(if (debuggableVariant.get()) "only-fingerprint" else "all")
           add(entryFile.get())
           add(debuggableVariant.get().toString())
+          add(fingerprintInputFile.get().asFile.absolutePath)
         }
 
         if (Os.isFamily(Os.FAMILY_WINDOWS)) {
@@ -110,21 +190,6 @@ abstract class ExpoUpdatesPlugin : Plugin<Project> {
         it.workingDir(projectRoot)
       }
     }
-
-    private fun getExpoUpdatesPackageDir(): String {
-      val stdoutBuffer = ByteArrayOutputStream()
-      execOperations.exec {
-        val args = listOf(*nodeExecutableAndArgs.get().toTypedArray(), "-e", "console.log(require('path').dirname(require.resolve('expo-updates/package.json')));")
-        if (Os.isFamily(Os.FAMILY_WINDOWS)) {
-          it.commandLine("cmd", "/c", *args.toTypedArray())
-        } else {
-          it.commandLine(args)
-        }
-        it.workingDir(projectRoot.get())
-        it.standardOutput = stdoutBuffer
-      }
-      return String(stdoutBuffer.toByteArray()).trim()
-    }
   }
 
   companion object {
@@ -136,23 +201,15 @@ abstract class ExpoUpdatesPlugin : Plugin<Project> {
 
 internal fun getConfigMode(
   inheritedMode: String?,
-  isDevelopmentBuild: Boolean
+  isDebuggableVariant: Boolean
 ): String = when {
-  !inheritedMode.isNullOrEmpty() -> inheritedMode
-  isDevelopmentBuild -> "development"
+  inheritedMode != null -> inheritedMode
+  isDebuggableVariant -> "development"
   else -> "production"
 }
 
-internal fun isDevelopmentBuild(
-  buildType: String?,
-  isDebuggableVariant: Boolean,
-  nativeDebuggingEnabled: Boolean
-): Boolean {
-  if (!nativeDebuggingEnabled) {
-    return isDebuggableVariant
-  }
-  return buildType == "debug" || buildType == "debugOptimized"
-}
+internal fun isDebuggableVariant(variantName: String, debuggableVariants: List<String>): Boolean =
+  debuggableVariants.any { it.equals(variantName, ignoreCase = true) }
 
 /**
  * Synced implementation from [RNGP](https://github.com/facebook/react-native/blob/9bdd777fd766ff/packages/react-native-gradle-plugin/src/main/kotlin/com/facebook/react/utils/PathUtils.kt#L20-L33)

@@ -31,7 +31,7 @@ export async function createManifestForBuildAsync(
     platform,
     entryFile,
     minify: false,
-    dev, // ensures debug assets packaged correctly for iOS and native debug
+    dev,
     sourcemapUseAbsolutePath: false,
     resetCache: false,
   };
