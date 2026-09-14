@@ -170,7 +170,6 @@ xdescribe(getProcessOptions, () => {
         shouldSkipInitialBundling: true,
         terminal: 'foobar',
         port: 3000,
-        mode: 'development',
       })
     ).toEqual({
       env: {},
@@ -178,19 +177,33 @@ xdescribe(getProcessOptions, () => {
   });
 });
 
-describe(getProcessOptions, () => {
-  it.each([
-    { mode: 'development' as const, packager: true },
-    { mode: 'production' as const, packager: false },
-  ])('passes $mode mode to Xcode when packager is $packager', ({ mode, packager }) => {
-    expect(
-      getProcessOptions({
-        packager,
-        terminal: undefined,
-        port: 8081,
-        mode,
-      }).env
-    ).toMatchObject({ __EXPO_CONFIG_MODE: mode });
+describe.each([true, false])('getProcessOptions with packager %s', (packager) => {
+  const originalEnv = process.env;
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  describe.each(['development', 'production'] as const)('with NODE_ENV=%s', (nodeEnv) => {
+    beforeEach(() => {
+      process.env = { ...originalEnv, NODE_ENV: nodeEnv };
+      delete process.env.__EXPO_CONFIG_MODE;
+    });
+
+    it('does not infer a native config override', () => {
+      expect(
+        getProcessOptions({ packager, terminal: undefined, port: 8081 }).env
+      ).not.toHaveProperty('__EXPO_CONFIG_MODE');
+    });
+
+    it.each(['development', 'production'])('preserves an explicit %s override', (configMode) => {
+      process.env.__EXPO_CONFIG_MODE = configMode;
+
+      expect(getProcessOptions({ packager, terminal: undefined, port: 8081 }).env).toMatchObject({
+        __EXPO_CONFIG_MODE: configMode,
+      });
+      expect(process.env.__EXPO_CONFIG_MODE).toBe(configMode);
+    });
   });
 });
 
@@ -356,4 +369,17 @@ ProcessInfoPlistFile /Users/evanbacon/Library/Developer/Xcode/DerivedData/dec352
       '/Users/evanbacon/Library/Developer/Xcode/DerivedData/dec352blank-atotwaonfbrdkmgspyclhglnaagn/Build/Products/Debug-iphonesimulator/dec352blank.app'
     );
   });
+
+  it.each(['DebugStaging', 'Staging', 'debugStaging'])(
+    'matches the binary fallback for configuration %s',
+    (configuration) => {
+      expect(
+        getAppBinaryPath(
+          fixture.replaceAll('Debug-iphonesimulator', `${configuration}-iphonesimulator`)
+        )
+      ).toBe(
+        `/Users/evanbacon/Library/Developer/Xcode/DerivedData/dec352blank-atotwaonfbrdkmgspyclhglnaagn/Build/Products/${configuration}-iphonesimulator/dec352blank.app`
+      );
+    }
+  );
 });

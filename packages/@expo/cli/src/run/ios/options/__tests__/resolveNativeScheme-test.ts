@@ -9,6 +9,7 @@ jest.mock('@expo/config-plugins', () => {
     IOSConfig: {
       ...jest.requireActual('@expo/config-plugins').IOSConfig,
       BuildScheme: {
+        ...jest.requireActual('@expo/config-plugins').IOSConfig.BuildScheme,
         getRunnableSchemesFromXcodeproj: jest.fn(),
       },
     },

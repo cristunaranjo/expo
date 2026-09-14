@@ -1,14 +1,31 @@
+import { getConfig } from '@expo/config';
 import { vol } from 'memfs';
 
+import { exportEagerAsync } from '../../../export/embed/exportEager';
 import { Log } from '../../../log';
-import rnFixture from '../../../prebuild/__tests__/fixtures/react-native-project';
+import * as CocoaPods from '../../../utils/cocoapods';
 import { loadEnvFiles } from '../../../utils/nodeEnv';
+import * as NativeProject from '../../ensureNativeProject';
 import { logProjectLogsLocation } from '../../hints';
 import { startBundlerAsync } from '../../startBundler';
 import { buildAsync } from '../XcodeBuild';
 import { launchAppAsync } from '../launchApp';
+import {
+  createNativeProjectFixture,
+  createScheme,
+  schemePath,
+} from '../options/__tests__/nativeProjectFixture';
 import { isSimulatorDevice, resolveDeviceAsync } from '../options/resolveDevice';
 import { runIosAsync } from '../runIosAsync';
+
+declare namespace globalThis {
+  let __DEV__: boolean | undefined;
+}
+
+jest.mock('@expo/config', () => {
+  const config = jest.requireActual<typeof import('@expo/config')>('@expo/config');
+  return { ...config, getConfig: jest.fn(config.getConfig) };
+});
 
 jest.mock('../../hints', () => ({
   logProjectLogsLocation: jest.fn(),
@@ -88,7 +105,7 @@ describe(runIosAsync, () => {
     mockPlatform('darwin');
     vol.fromJSON(
       {
-        ...rnFixture,
+        ...createNativeProjectFixture(configuration),
         '/package.json': JSON.stringify({}),
         'node_modules/expo/package.json': JSON.stringify({
           version: '53.0.0',
@@ -101,7 +118,13 @@ describe(runIosAsync, () => {
 
     expect(loadEnvFiles).toHaveBeenCalledWith('/', { mode });
     expect(startBundlerAsync).toHaveBeenCalledWith('/', expect.objectContaining({ mode }));
-    expect(buildAsync).toHaveBeenCalledWith(expect.objectContaining({ configuration, mode }));
+    expect(exportEagerAsync).toHaveBeenCalledTimes(mode === 'production' ? 1 : 0);
+    expect(buildAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        configuration,
+        eagerBundleOptions: mode === 'production' ? '{}' : undefined,
+      })
+    );
   });
 
   it(`asserts that the function only runs on darwin machines`, async () => {
@@ -114,7 +137,7 @@ describe(runIosAsync, () => {
     mockPlatform('darwin');
     vol.fromJSON(
       {
-        ...rnFixture,
+        ...createNativeProjectFixture(),
         '/package.json': JSON.stringify({}),
         'node_modules/expo/package.json': JSON.stringify({
           version: '53.0.0',
@@ -132,7 +155,6 @@ describe(runIosAsync, () => {
       device: { name: 'mock', udid: '123' },
       eagerBundleOptions: undefined,
       isSimulator: true,
-      mode: 'development',
       osType: 'iOS',
       port: 8081,
       projectRoot: '/',
@@ -170,7 +192,7 @@ describe(runIosAsync, () => {
     mockPlatform('darwin');
     vol.fromJSON(
       {
-        ...rnFixture,
+        ...createNativeProjectFixture(),
         '/package.json': JSON.stringify({}),
         'node_modules/expo/package.json': JSON.stringify({
           version: '53.0.0',
@@ -196,7 +218,6 @@ describe(runIosAsync, () => {
       },
       eagerBundleOptions: undefined,
       isSimulator: false,
-      mode: 'development',
       osType: 'iOS',
       port: 8081,
       projectRoot: '/',
@@ -227,4 +248,128 @@ describe(runIosAsync, () => {
 
     expect(logProjectLogsLocation).toHaveBeenCalled();
   });
+
+  it('loads the selected scheme mode before evaluating app config', async () => {
+    mockPlatform('darwin');
+    vol.fromJSON(
+      {
+        ...createNativeProjectFixture(),
+        [`${schemePath}/DebugClient.xcscheme`]: createScheme('Release'),
+        'package.json': '{}',
+        'node_modules/expo/package.json': '{"version":"53.0.0"}',
+        '.env.production': 'EXPO_PUBLIC_RUN_IOS_MODE=production-file',
+        '.env.development': 'EXPO_PUBLIC_RUN_IOS_MODE=development-file',
+      },
+      '/'
+    );
+    const originalEnv = process.env;
+    const originalDev = globalThis.__DEV__;
+    process.env = { ...originalEnv, NODE_ENV: 'development' };
+    delete process.env.__EXPO_ENV_LOADED;
+    delete process.env.EXPO_PUBLIC_RUN_IOS_MODE;
+    jest
+      .mocked(loadEnvFiles)
+      .mockImplementationOnce(
+        jest.requireActual<typeof import('../../../utils/nodeEnv')>('../../../utils/nodeEnv')
+          .loadEnvFiles
+      );
+    jest.mocked(getConfig).mockImplementationOnce((...args) => {
+      expect(process.env.NODE_ENV).toBe('production');
+      expect(process.env.EXPO_PUBLIC_RUN_IOS_MODE).toBe('production-file');
+      return jest.requireActual<typeof import('@expo/config')>('@expo/config').getConfig(...args);
+    });
+    try {
+      await runIosAsync('/', { scheme: 'DebugClient' });
+      expect(loadEnvFiles).toHaveBeenCalledWith('/', { mode: 'production' });
+      expect(jest.mocked(loadEnvFiles).mock.invocationCallOrder[0]).toBeLessThan(
+        jest.mocked(getConfig).mock.invocationCallOrder[0]!
+      );
+      expect(buildAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ scheme: 'DebugClient', configuration: 'Release' })
+      );
+      expect(exportEagerAsync).toHaveBeenCalledTimes(1);
+      expect(startBundlerAsync).toHaveBeenCalledWith(
+        '/',
+        expect.objectContaining({ mode: 'production' })
+      );
+    } finally {
+      process.env = originalEnv;
+      globalThis.__DEV__ = originalDev;
+    }
+  });
+
+  it('uses the workspace created by CocoaPods without changing the selected scheme mode', async () => {
+    mockPlatform('darwin');
+    vol.fromJSON(
+      {
+        ...createNativeProjectFixture(),
+        [`${schemePath}/DebugClient.xcscheme`]: createScheme('Release'),
+        'package.json': '{}',
+        'node_modules/expo/package.json': '{"version":"53.0.0"}',
+      },
+      '/'
+    );
+    const syncPods = jest
+      .spyOn(CocoaPods, 'maybePromptToSyncPodsAsync')
+      .mockImplementationOnce(async () => {
+        expect(loadEnvFiles).toHaveBeenCalledWith('/', { mode: 'production' });
+        vol.fromJSON({ 'ios/ReactNativeProject.xcworkspace/contents.xcworkspacedata': '' }, '/');
+      });
+    try {
+      await runIosAsync('/', { scheme: 'DebugClient', install: true });
+      expect(syncPods).toHaveBeenCalledWith('/');
+      expect(loadEnvFiles).toHaveBeenCalledTimes(1);
+      expect(buildAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scheme: 'DebugClient',
+          configuration: 'Release',
+          xcodeProject: { isWorkspace: true, name: '/ios/ReactNativeProject.xcworkspace' },
+        })
+      );
+    } finally {
+      syncPods.mockRestore();
+    }
+  });
+
+  it('rejects scheme-only selection before Prebuild when no native project exists', async () => {
+    mockPlatform('darwin');
+    vol.fromJSON({ 'package.json': '{}' }, '/');
+    await expect(runIosAsync('/', { scheme: 'DebugClient' })).rejects.toThrow(
+      /Run configuration before the iOS project exists/
+    );
+    expect(loadEnvFiles).not.toHaveBeenCalled();
+    expect(buildAsync).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 'Release'])(
+    'sets the generation mode before Prebuild for configuration %s',
+    async (configuration) => {
+      mockPlatform('darwin');
+      vol.fromJSON(
+        {
+          'package.json': '{}',
+          'node_modules/expo/package.json': '{"version":"53.0.0"}',
+        },
+        '/'
+      );
+      const ensureNativeProject = jest
+        .spyOn(NativeProject, 'ensureNativeProjectAsync')
+        .mockImplementationOnce(async () => {
+          expect(loadEnvFiles).toHaveBeenCalledWith('/', {
+            mode: configuration === 'Release' ? 'production' : 'development',
+          });
+          vol.fromJSON(createNativeProjectFixture(), '/');
+          return false;
+        });
+      try {
+        await runIosAsync('/', { configuration });
+        expect(loadEnvFiles).toHaveBeenCalledTimes(1);
+        expect(buildAsync).toHaveBeenCalledWith(
+          expect.objectContaining({ configuration: configuration ?? 'Debug' })
+        );
+      } finally {
+        ensureNativeProject.mockRestore();
+      }
+    }
+  );
 });
