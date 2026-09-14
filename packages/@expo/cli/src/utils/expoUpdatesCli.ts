@@ -30,6 +30,7 @@ export async function expoUpdatesCommandAsync(
 
     return (
       await spawnAsync(expoUpdatesCli, args, {
+        cwd: projectDir,
         stdio: 'pipe',
         env: commandEnv as NodeJS.ProcessEnv,
       })

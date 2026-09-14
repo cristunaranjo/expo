@@ -48,6 +48,6 @@ Configure expo-updates code signing for this project and verify setup
     certificateInput,
     keyInput,
     keyid,
-    mode: getConfigEnvMode('development'),
+    mode: getConfigEnvMode('production'),
   });
 };
