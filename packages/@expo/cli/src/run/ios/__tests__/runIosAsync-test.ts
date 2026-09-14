@@ -1,6 +1,8 @@
 import spawnAsync from '@expo/spawn-async';
+import assert from 'assert';
 import { vol } from 'memfs';
 
+import { exportEagerAsync } from '../../../export/embed/exportEager';
 import { Log } from '../../../log';
 import rnFixture from '../../../prebuild/__tests__/fixtures/react-native-project';
 import { loadEnvFiles } from '../../../utils/nodeEnv';
@@ -78,9 +80,12 @@ const mockPlatform = (value: typeof process.platform) =>
   });
 
 const platform = process.platform;
+const originalEnv = process.env;
 
 afterEach(() => {
   mockPlatform(platform);
+  process.env = originalEnv;
+  jest.mocked(loadEnvFiles).mockReset();
 });
 
 describe(runIosAsync, () => {
@@ -108,30 +113,176 @@ describe(runIosAsync, () => {
     );
   });
 
-  it('passes the config mode when rebundling Expo config', async () => {
-    mockPlatform('darwin');
-    vol.fromJSON(
-      {
-        ...rnFixture,
-        '/package.json': JSON.stringify({}),
-        'node_modules/expo/package.json': JSON.stringify({
-          version: '53.0.0',
-        }),
-      },
-      '/'
-    );
-
-    await runIosAsync('/', {
-      binary: '/mock_binary',
+  it.each([
+    {
+      configuration: undefined,
+      hasBundle: true,
+      configMode: undefined,
+      expectedMode: 'production',
+    },
+    { configuration: 'Debug', hasBundle: true, configMode: undefined, expectedMode: 'production' },
+    {
       configuration: 'Release',
-      device: 'mock',
-      rebundle: true,
-    });
+      hasBundle: true,
+      configMode: undefined,
+      expectedMode: 'production',
+    },
+    {
+      configuration: 'Debug',
+      hasBundle: false,
+      configMode: undefined,
+      expectedMode: 'development',
+    },
+    {
+      configuration: 'Release',
+      hasBundle: false,
+      configMode: undefined,
+      expectedMode: 'production',
+    },
+    {
+      configuration: 'Release',
+      hasBundle: true,
+      configMode: 'development',
+      expectedMode: 'development',
+    },
+    {
+      configuration: 'Debug',
+      hasBundle: false,
+      configMode: 'production',
+      expectedMode: 'production',
+    },
+    { configuration: 'Debug', hasBundle: true, configMode: '', expectedMode: '' },
+  ] as const)(
+    'passes $expectedMode for $configuration with bundle=$hasBundle and override=$configMode',
+    async ({ configuration, hasBundle, configMode, expectedMode }) => {
+      mockPlatform('darwin');
+      process.env = {
+        ...originalEnv,
+        EXPO_PUBLIC_MODE_VALUE: 'parent-value',
+        __EXPO_ENV_LOADED: JSON.stringify(['EXPO_PUBLIC_MODE_VALUE']),
+      };
+      if (configMode !== undefined) {
+        process.env.__EXPO_CONFIG_MODE = configMode;
+      } else {
+        delete process.env.__EXPO_CONFIG_MODE;
+      }
+      vol.fromJSON(
+        {
+          ...rnFixture,
+          '/package.json': JSON.stringify({}),
+          'node_modules/expo/package.json': JSON.stringify({
+            version: '53.0.0',
+          }),
+          ...(hasBundle ? { '/mock_binary/main.jsbundle': '' } : {}),
+        },
+        '/'
+      );
 
-    expect(spawnAsync).toHaveBeenCalledWith('node', expect.any(Array), {
-      env: expect.objectContaining({ __EXPO_CONFIG_MODE: 'production' }),
-    });
-  });
+      await runIosAsync('/', {
+        binary: '/mock_binary',
+        configuration,
+        device: 'mock',
+        rebundle: true,
+      });
+
+      expect(spawnAsync).toHaveBeenCalledWith('node', expect.any(Array), {
+        env: expect.any(Object),
+      });
+      const childEnv = jest.mocked(spawnAsync).mock.calls[0]?.[2]?.env;
+      expect(childEnv?.__EXPO_CONFIG_MODE).toBe(expectedMode);
+      expect(childEnv?.NODE_ENV).toBe(process.env.NODE_ENV);
+      expect(childEnv).not.toHaveProperty('EXPO_PUBLIC_MODE_VALUE');
+      expect(childEnv).not.toHaveProperty('__EXPO_ENV_LOADED');
+      expect(process.env.__EXPO_CONFIG_MODE).toBe(configMode);
+      if (hasBundle) {
+        expect(process.env.EXPO_PUBLIC_MODE_VALUE).toBeUndefined();
+        expect(process.env.NODE_ENV).toBe('production');
+        expect(loadEnvFiles).toHaveBeenLastCalledWith('/', { mode: 'production' });
+        const reloadOrder = jest.mocked(loadEnvFiles).mock.invocationCallOrder[1];
+        assert(reloadOrder !== undefined);
+        expect(jest.mocked(spawnAsync).mock.invocationCallOrder[0]).toBeGreaterThan(reloadOrder);
+        expect(jest.mocked(exportEagerAsync).mock.invocationCallOrder[0]).toBeGreaterThan(
+          reloadOrder
+        );
+        expect(startBundlerAsync).toHaveBeenCalledWith(
+          '/',
+          expect.objectContaining({ mode: 'production' })
+        );
+        expect(exportEagerAsync).toHaveBeenCalledWith(
+          '/',
+          expect.objectContaining({
+            dev: false,
+            resetCache: true,
+            bundleOutput: '/mock_binary/main.jsbundle',
+          })
+        );
+      } else {
+        expect(process.env.EXPO_PUBLIC_MODE_VALUE).toBe('parent-value');
+        expect(loadEnvFiles).toHaveBeenCalledTimes(1);
+        expect(exportEagerAsync).not.toHaveBeenCalled();
+      }
+    }
+  );
+
+  it.each([
+    { babelEnv: undefined, changedBabelEnv: undefined, expected: 'production' },
+    { babelEnv: '', changedBabelEnv: undefined, expected: 'production' },
+    { babelEnv: 'development', changedBabelEnv: undefined, expected: 'development' },
+    { babelEnv: 'custom', changedBabelEnv: undefined, expected: 'custom' },
+    { babelEnv: undefined, changedBabelEnv: 'custom', expected: 'custom' },
+  ])(
+    'rebundles with BABEL_ENV=$expected from $babelEnv changed to $changedBabelEnv',
+    async ({ babelEnv, changedBabelEnv, expected }) => {
+      mockPlatform('darwin');
+      process.env = { ...originalEnv };
+      if (babelEnv === undefined) {
+        delete process.env.BABEL_ENV;
+      } else {
+        process.env.BABEL_ENV = babelEnv;
+      }
+      jest.mocked(loadEnvFiles).mockImplementation((_root, { mode }) => {
+        process.env.BABEL_ENV ||= mode;
+        return process.env;
+      });
+      if (changedBabelEnv !== undefined) {
+        jest.mocked(resolveDeviceAsync).mockImplementationOnce(async () => {
+          process.env.BABEL_ENV = changedBabelEnv;
+          return {
+            name: 'mock',
+            udid: '123',
+            state: 'Booted',
+            isAvailable: true,
+            deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16',
+            osType: 'iOS',
+            osVersion: '18.0',
+            runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-18-0',
+            dataPath: '/mock-simulator/data',
+            logPath: '/mock-simulator/logs',
+            windowName: 'mock (18.0)',
+          };
+        });
+      }
+      vol.fromJSON(
+        {
+          ...rnFixture,
+          '/package.json': JSON.stringify({}),
+          'node_modules/expo/package.json': JSON.stringify({ version: '53.0.0' }),
+          '/mock_binary/main.jsbundle': '',
+        },
+        '/'
+      );
+
+      await runIosAsync('/', {
+        binary: '/mock_binary',
+        configuration: 'Debug',
+        device: 'mock',
+        rebundle: true,
+      });
+
+      expect(process.env.BABEL_ENV).toBe(expected);
+      expect(exportEagerAsync).toHaveBeenCalledWith('/', expect.objectContaining({ dev: false }));
+    }
+  );
 
   it(`asserts that the function only runs on darwin machines`, async () => {
     mockPlatform('win32');

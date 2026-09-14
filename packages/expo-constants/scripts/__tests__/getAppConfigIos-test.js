@@ -7,9 +7,41 @@ const scriptPath = path.resolve(__dirname, '../get-app-config-ios.sh');
 
 describe('get-app-config-ios.sh', () => {
   let projectRoot;
+  let podsRoot;
+  let destinationDir;
 
   beforeEach(() => {
     projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'expo-constants-ios-'));
+    podsRoot = path.join(projectRoot, 'ios', 'Pods');
+    destinationDir = path.join(projectRoot, 'build', 'EXConstants.bundle');
+    fs.mkdirSync(podsRoot, { recursive: true });
+    fs.mkdirSync(destinationDir, { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'package.json'), '{}');
+    fs.writeFileSync(
+      path.join(projectRoot, 'app.config.js'),
+      `module.exports = {
+        name: 'test',
+        slug: 'test',
+        extra: {
+          mode: process.env.NODE_ENV,
+          configMode: process.env.__EXPO_CONFIG_MODE || 'not-set',
+          value: process.env.EXPO_PUBLIC_MODE_VALUE,
+          envFile: process.env.ENV_FILE,
+        },
+      };`
+    );
+    fs.writeFileSync(
+      path.join(projectRoot, '.env.development'),
+      'EXPO_PUBLIC_MODE_VALUE=development-value\n'
+    );
+    fs.writeFileSync(
+      path.join(projectRoot, '.env.production'),
+      'EXPO_PUBLIC_MODE_VALUE=production-value\n'
+    );
+    fs.writeFileSync(
+      path.join(projectRoot, 'ios', '.xcode.env'),
+      'export NODE_BINARY="$TEST_NODE_BINARY"\n'
+    );
   });
 
   afterEach(() => {
@@ -17,75 +49,139 @@ describe('get-app-config-ios.sh', () => {
   });
 
   it.each([
+    { configuration: 'Debug', override: undefined, mode: 'development', bundleFormat: 'shallow' },
+    { configuration: 'Release', override: undefined, mode: 'production', bundleFormat: 'shallow' },
     {
-      build: 'a Debug build',
-      configuration: 'Debug',
-      inheritedMode: '',
-      expectedMode: 'development',
-    },
-    {
-      build: 'a custom Debug build',
       configuration: 'DebugStaging',
-      inheritedMode: '',
-      expectedMode: 'development',
+      override: undefined,
+      mode: 'development',
+      bundleFormat: 'shallow',
     },
+    { configuration: 'Staging', override: undefined, mode: 'production', bundleFormat: 'deep' },
     {
-      build: 'a lowercase debug configuration',
       configuration: 'debugStaging',
-      inheritedMode: '',
-      expectedMode: 'production',
+      override: undefined,
+      mode: 'production',
+      bundleFormat: 'shallow',
+    },
+    { configuration: 'DEBUG', override: undefined, mode: 'production', bundleFormat: 'shallow' },
+    {
+      configuration: 'Staging',
+      override: 'development',
+      mode: 'development',
+      bundleFormat: 'shallow',
+    },
+    { configuration: 'Debug', override: 'production', mode: 'production', bundleFormat: 'shallow' },
+    {
+      configuration: 'Debug',
+      override: undefined,
+      updatesEnvironment: 'export CONFIGURATION=Release\n',
+      mode: 'production',
+      bundleFormat: 'shallow',
     },
     {
-      build: 'an uppercase DEBUG configuration',
-      configuration: 'DEBUG',
-      inheritedMode: '',
-      expectedMode: 'production',
+      configuration: 'Debug',
+      override: 'development',
+      updatesEnvironment: 'export CONFIGURATION=Release\n',
+      mode: 'development',
+      bundleFormat: 'shallow',
     },
     {
-      build: 'a Release build',
-      configuration: 'Release',
-      inheritedMode: '',
-      expectedMode: 'production',
+      configuration: 'Debug',
+      override: undefined,
+      updatesEnvironment: 'export CONFIGURATION=Release\n',
+      baseEnvironment: 'export APP_CONFIGURATION=DebugStaging\n',
+      localEnvironment: 'export CONFIGURATION="$APP_CONFIGURATION"\n',
+      mode: 'development',
+      bundleFormat: 'shallow',
     },
     {
-      build: 'a build with an inherited mode',
-      configuration: 'Release',
-      inheritedMode: 'development',
-      expectedMode: 'development',
+      configuration: 'Debug',
+      override: undefined,
+      updatesEnvironment: 'export CONFIGURATION=Release\n',
+      localEnvironment: '[ "$CONFIGURATION" = Debug ] && export DEBUG_OPTION=1\n',
+      mode: 'production',
+      bundleFormat: 'shallow',
     },
-  ])('passes the config mode for $build', (testCase) => {
-    const captureFile = path.join(projectRoot, 'capture.txt');
-    const fakeNode = path.join(projectRoot, 'node');
-    const podsRoot = path.join(projectRoot, 'ios', 'Pods');
-    fs.mkdirSync(podsRoot, { recursive: true });
-    fs.writeFileSync(
-      path.join(projectRoot, 'ios', '.xcode.env'),
-      'export NODE_BINARY="$FAKE_NODE_BINARY"\n'
-    );
-    fs.writeFileSync(
-      fakeNode,
-      '#!/bin/bash\nprintf \'%s\\n\' "$__EXPO_CONFIG_MODE" "$@" > "$CAPTURE_FILE"\n',
-      { mode: 0o755 }
-    );
+    {
+      configuration: 'Debug',
+      override: undefined,
+      updatesEnvironment: 'export CONFIGURATION=Release\n',
+      localEnvironment: 'if false | true; then export CONFIGURATION=DebugStaging; fi\n',
+      mode: 'development',
+      bundleFormat: 'shallow',
+    },
+  ])('loads $mode for $configuration with override=$override', (testCase) => {
+    if (testCase.baseEnvironment) {
+      fs.appendFileSync(path.join(projectRoot, 'ios', '.xcode.env'), testCase.baseEnvironment);
+    }
+    if (testCase.updatesEnvironment) {
+      fs.writeFileSync(
+        path.join(projectRoot, 'ios', '.xcode.env.updates'),
+        testCase.updatesEnvironment
+      );
+    }
+    if (testCase.localEnvironment) {
+      fs.writeFileSync(
+        path.join(projectRoot, 'ios', '.xcode.env.local'),
+        testCase.localEnvironment
+      );
+    }
+    const env = {
+      ...process.env,
+      BUNDLE_FORMAT: testCase.bundleFormat,
+      CONFIGURATION: testCase.configuration,
+      CONFIGURATION_BUILD_DIR: path.dirname(destinationDir),
+      NODE_ENV: 'development',
+      EX_UPDATES_NATIVE_DEBUG: undefined,
+      ENV_FILE: 'inherited-env-file',
+      PODS_ROOT: podsRoot,
+      PROJECT_DIR: podsRoot,
+      PROJECT_ROOT: projectRoot,
+      TEST_NODE_BINARY: process.execPath,
+      EXPO_PUBLIC_MODE_VALUE: 'parent-value',
+      __EXPO_CONFIG_MODE: testCase.override,
+      __EXPO_ENV_LOADED: JSON.stringify(['EXPO_PUBLIC_MODE_VALUE']),
+    };
+    delete env.EXPO_NO_DOTENV;
+    delete env.EXPO_UNSAFE_DOTENV_KEYS;
 
+    const result = spawnSync('/bin/bash', [scriptPath], { encoding: 'utf8', env });
+
+    expect(result.stderr).toBe('');
+    expect(result.status).toBe(0);
+    const outputDir =
+      testCase.bundleFormat === 'deep'
+        ? path.join(destinationDir, 'Contents', 'Resources')
+        : destinationDir;
+    expect(JSON.parse(fs.readFileSync(path.join(outputDir, 'app.config'), 'utf8'))).toMatchObject({
+      extra: {
+        mode: testCase.mode,
+        configMode: 'not-set',
+        value: `${testCase.mode}-value`,
+        envFile: 'inherited-env-file',
+      },
+    });
+  });
+
+  it.each(['', 'staging'])('rejects the explicit config override "%s"', (override) => {
     const result = spawnSync('/bin/bash', [scriptPath], {
       encoding: 'utf8',
       env: {
         ...process.env,
         BUNDLE_FORMAT: 'shallow',
-        CAPTURE_FILE: captureFile,
-        CONFIGURATION: testCase.configuration,
-        CONFIGURATION_BUILD_DIR: path.join(projectRoot, 'build'),
-        FAKE_NODE_BINARY: fakeNode,
+        CONFIGURATION: 'Debug',
+        CONFIGURATION_BUILD_DIR: path.dirname(destinationDir),
         PODS_ROOT: podsRoot,
         PROJECT_DIR: podsRoot,
         PROJECT_ROOT: projectRoot,
-        __EXPO_CONFIG_MODE: testCase.inheritedMode,
+        TEST_NODE_BINARY: process.execPath,
+        __EXPO_CONFIG_MODE: override,
       },
     });
 
-    expect(result.stderr).toBe('');
-    expect(result.status).toBe(0);
-    expect(fs.readFileSync(captureFile, 'utf8').trim().split('\n')[0]).toBe(testCase.expectedMode);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('__EXPO_CONFIG_MODE');
+    expect(fs.existsSync(path.join(destinationDir, 'app.config'))).toBe(false);
   });
 });

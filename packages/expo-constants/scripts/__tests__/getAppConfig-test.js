@@ -69,16 +69,18 @@ describe('getAppConfig', () => {
     });
   });
 
-  it('requires a config mode', () => {
-    const env = { ...process.env };
-    delete env.__EXPO_CONFIG_MODE;
-
+  it.each([
+    { mode: undefined, error: 'Must provide __EXPO_CONFIG_MODE' },
+    { mode: '', error: 'Must provide __EXPO_CONFIG_MODE' },
+    { mode: 'staging', error: 'Invalid __EXPO_CONFIG_MODE value: "staging"' },
+  ])('rejects config mode $mode before writing app.config', ({ mode, error }) => {
     const result = spawnSync(process.execPath, [scriptPath, projectRoot, destinationDir], {
-      env,
+      env: { ...process.env, __EXPO_CONFIG_MODE: mode },
       encoding: 'utf8',
     });
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain('Must provide a config mode');
+    expect(result.stderr).toContain(error);
+    expect(fs.existsSync(path.join(destinationDir, 'app.config'))).toBe(false);
   });
 });
