@@ -41,6 +41,7 @@ describe(expoUpdatesCommandAsync, () => {
       '/app/node_modules/expo-updates/bin/cli.js',
       ['runtimeversion:resolve'],
       {
+        cwd: '/app',
         stdio: 'pipe',
         env: expect.objectContaining({
           NODE_ENV: 'production',

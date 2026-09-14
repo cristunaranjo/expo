@@ -18,12 +18,18 @@ jest.mock(
   { virtual: true }
 );
 
-describe('direct command modes', () => {
+describe.each([
+  { parentMode: undefined, expectedMode: 'production' },
+  { parentMode: 'development', expectedMode: 'development' },
+])('command modes with parent mode $parentMode', ({ parentMode, expectedMode }) => {
   const originalEnv = process.env;
 
   beforeEach(() => {
     process.env = { ...originalEnv };
     delete process.env.__EXPO_CONFIG_MODE;
+    if (parentMode) {
+      process.env.__EXPO_CONFIG_MODE = parentMode;
+    }
     mockResolveRuntimeVersionAsync.mockResolvedValue({
       runtimeVersion: '1',
       fingerprintSources: null,
@@ -36,7 +42,7 @@ describe('direct command modes', () => {
     jest.clearAllMocks();
   });
 
-  it('uses development mode for code signing', async () => {
+  it('passes the mode to code signing', async () => {
     await configureCodeSigning([
       '--certificate-input-directory',
       'certificates',
@@ -48,29 +54,32 @@ describe('direct command modes', () => {
       certificateInput: 'certificates',
       keyInput: 'keys',
       keyid: undefined,
-      mode: 'development',
+      mode: expectedMode,
     });
+    expect(process.env.__EXPO_CONFIG_MODE).toBeUndefined();
   });
 
-  it('uses production mode for runtime version resolution', async () => {
+  it('passes the mode to runtime version resolution', async () => {
     await resolveRuntimeVersion(['--platform', 'ios']);
 
     expect(mockResolveRuntimeVersionAsync).toHaveBeenCalledWith(
       expect.any(String),
       'ios',
       { debug: undefined, silent: true },
-      { mode: 'production', workflowOverride: undefined }
+      { mode: expectedMode, workflowOverride: undefined }
     );
+    expect(process.env.__EXPO_CONFIG_MODE).toBeUndefined();
   });
 
-  it('uses production mode for native configuration sync', async () => {
+  it('passes the mode to native configuration sync', async () => {
     await syncConfigurationToNative(['--platform', 'android', '--workflow', 'generic']);
 
     expect(syncConfigurationToNativeAsync).toHaveBeenCalledWith({
       projectRoot: expect.any(String),
       platform: 'android',
       workflow: 'generic',
-      mode: 'production',
+      mode: expectedMode,
     });
+    expect(process.env.__EXPO_CONFIG_MODE).toBeUndefined();
   });
 });
