@@ -6,6 +6,8 @@
 
 ### 🎉 New features
 
+- Read and validate iOS scheme Run configurations, including workspace and user schemes. ([#49555](https://github.com/expo/expo/pull/49555) by [@ramonclaudio](https://github.com/ramonclaudio))
+
 ### 🐛 Bug fixes
 
 - Keep accented and compatibility characters when deriving iOS project names from the app name ('Árbók' now becomes 'Arbok', not 'rbk'; 'ﬁre' becomes 'fire'). ([#49143](https://github.com/expo/expo/pull/49143) by [@vonovak](https://github.com/vonovak))
@@ -27,7 +29,6 @@
 
 ### 💡 Others
 
-- Allow custom Xcode configuration names in `getRunnableSchemesFromXcodeproj`. ([#49555](https://github.com/expo/expo/pull/49555) by [@ramonclaudio](https://github.com/ramonclaudio))
 - [iOS] Documented that `UIRequiresFullScreen` no longer opts an app out of resizing as of iOS 27, and noted it in the iPad multitasking warning. ([#48175](https://github.com/expo/expo/pull/48175) by [@alanjhughes](https://github.com/alanjhughes))
 
 ## 57.0.6 - 2026-07-22
