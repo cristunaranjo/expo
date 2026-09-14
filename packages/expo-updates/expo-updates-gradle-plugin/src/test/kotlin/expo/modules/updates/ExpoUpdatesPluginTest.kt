@@ -9,15 +9,18 @@ class ExpoUpdatesPluginTest {
     data class TestCase(
       val name: String,
       val inheritedMode: String?,
-      val isDevelopmentBuild: Boolean,
+      val isDebuggableVariant: Boolean,
       val expectedMode: String
     )
 
     val testCases = listOf(
-      TestCase("inherited config mode", "development", false, "development"),
-      TestCase("Debug build", null, true, "development"),
-      TestCase("Release build", null, false, "production"),
-      TestCase("empty inherited config mode", "", true, "development")
+      TestCase("development override for a bundled variant", "development", false, "development"),
+      TestCase("production override for a debuggable variant", "production", true, "production"),
+      TestCase("debuggable variant", null, true, "development"),
+      TestCase("bundled variant", null, false, "production"),
+      TestCase("empty override for a debuggable variant", "", true, ""),
+      TestCase("empty override for a bundled variant", "", false, ""),
+      TestCase("invalid override reaches Node validation", "staging", false, "staging")
     )
 
     testCases.forEach { testCase ->
@@ -26,40 +29,47 @@ class ExpoUpdatesPluginTest {
         testCase.expectedMode,
         getConfigMode(
           inheritedMode = testCase.inheritedMode,
-          isDevelopmentBuild = testCase.isDevelopmentBuild
+          isDebuggableVariant = testCase.isDebuggableVariant
         )
       )
     }
   }
 
   @Test
-  fun `selects development builds`() {
+  fun `matches complete variant names against the effective React Native list`() {
     data class TestCase(
       val name: String,
-      val buildType: String,
-      val isDebuggableVariant: Boolean,
-      val nativeDebuggingEnabled: Boolean,
+      val variantName: String,
+      val debuggableVariants: List<String>,
       val expected: Boolean
     )
 
     val testCases = listOf(
-      TestCase("debuggable variant", "debug", true, false, true),
-      TestCase("non-debuggable variant", "release", false, false, false),
-      TestCase("native Debug build", "debug", false, true, true),
-      TestCase("native optimized Debug build", "debugOptimized", false, true, true),
-      TestCase("native Release build", "release", false, true, false)
+      TestCase("listed variant", "debug", listOf("debug"), true),
+      TestCase("unlisted variant", "release", listOf("debug"), false),
+      TestCase("listed flavored variant", "demoDebug", listOf("demoDebug"), true),
+      TestCase("case-insensitive membership", "demoDebug", listOf("DEMODEBUG"), true),
+      TestCase("unlisted flavored variant", "demoDebug", listOf("debug"), false),
+      TestCase("flavor alone is not a variant", "demoDebug", listOf("demo"), false),
+      TestCase("listed custom variant", "qa", listOf("qa"), true),
+      TestCase("unlisted custom variant", "qa", listOf("debug"), false),
+      TestCase("empty effective list", "debug", emptyList(), false)
     )
 
     testCases.forEach { testCase ->
       assertEquals(
         testCase.name,
         testCase.expected,
-        isDevelopmentBuild(
-          buildType = testCase.buildType,
-          isDebuggableVariant = testCase.isDebuggableVariant,
-          nativeDebuggingEnabled = testCase.nativeDebuggingEnabled
-        )
+        isDebuggableVariant(testCase.variantName, testCase.debuggableVariants)
       )
+    }
+  }
+
+  @Test
+  fun `uses production config when native debugging clears the React Native list`() {
+    for (variantName in listOf("debug", "debugOptimized", "demoDebug", "qa", "release")) {
+      val debuggableVariant = isDebuggableVariant(variantName, emptyList())
+      assertEquals(variantName, "production", getConfigMode(null, debuggableVariant))
     }
   }
 }

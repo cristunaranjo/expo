@@ -35,6 +35,7 @@ describe(loadEnvForBuild, () => {
     fs.writeFileSync(path.join(projectRoot, `.env.${mode}`), `MODE_VALUE=${expectedValue}`);
     process.env = {
       PATH: originalEnv.PATH,
+      NODE_ENV: mode === 'development' ? 'production' : 'development',
       __EXPO_CONFIG_MODE: mode,
     };
 
@@ -66,9 +67,22 @@ describe(loadEnvForBuild, () => {
   it('requires an explicit config mode', () => {
     process.env = {
       PATH: originalEnv.PATH,
+      NODE_ENV: 'production',
     };
 
     expect(() => loadEnvForBuild(projectRoot)).toThrow('Must provide a config mode');
+  });
+
+  it.each(['', 'staging'])('rejects the invalid config mode %j', (mode) => {
+    process.env = {
+      PATH: originalEnv.PATH,
+      NODE_ENV: 'production',
+      __EXPO_CONFIG_MODE: mode,
+    };
+
+    expect(() => loadEnvForBuild(projectRoot)).toThrow(
+      mode ? 'Invalid __EXPO_CONFIG_MODE value' : 'Must provide a config mode'
+    );
   });
 });
 
