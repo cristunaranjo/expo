@@ -1,15 +1,23 @@
-import { getConfig } from '@expo/config';
+import {
+  type CalculateFingerprintHashProps,
+  type ResolveBuildCacheProps,
+  type UploadBuildCacheProps,
+  getConfig,
+} from '@expo/config';
 import { vol } from 'memfs';
 
 import { exportEagerAsync } from '../../../export/embed/exportEager';
 import { Log } from '../../../log';
+import * as BuildCacheProviders from '../../../utils/build-cache-providers';
 import * as CocoaPods from '../../../utils/cocoapods';
 import { loadEnvFiles } from '../../../utils/nodeEnv';
+import * as Prompts from '../../../utils/prompts';
 import * as NativeProject from '../../ensureNativeProject';
 import { logProjectLogsLocation } from '../../hints';
 import { startBundlerAsync } from '../../startBundler';
 import { buildAsync } from '../XcodeBuild';
-import { launchAppAsync } from '../launchApp';
+import type { Options } from '../XcodeBuild.types';
+import { getLaunchInfoForBinaryAsync, launchAppAsync } from '../launchApp';
 import {
   createNativeProjectFixture,
   createScheme,
@@ -95,6 +103,121 @@ afterEach(() => {
 
 describe(runIosAsync, () => {
   afterEach(() => vol.reset());
+
+  describe('build cache', () => {
+    const calculateFingerprintHash = jest.fn<Promise<string>, [CalculateFingerprintHashProps]>();
+    const resolveBuildCache = jest.fn<Promise<string | null>, [ResolveBuildCacheProps]>();
+    const uploadBuildCache = jest.fn<Promise<string | null>, [UploadBuildCacheProps]>();
+
+    beforeEach(() => {
+      mockPlatform('darwin');
+      vol.fromJSON(
+        {
+          ...createNativeProjectFixture(),
+          [`${schemePath}/ReleaseClient.xcscheme`]: createScheme('Release'),
+          'package.json': '{}',
+          'node_modules/expo/package.json': '{"version":"58.0.0"}',
+        },
+        '/'
+      );
+      calculateFingerprintHash.mockReset().mockResolvedValue('fingerprint');
+      resolveBuildCache.mockReset().mockResolvedValue(null);
+      uploadBuildCache.mockReset().mockResolvedValue(null);
+      jest.spyOn(BuildCacheProviders, 'resolveBuildCacheProvider').mockResolvedValue({
+        plugin: {
+          calculateFingerprintHash,
+          resolveBuildCache,
+          uploadBuildCache,
+        },
+        options: {},
+      });
+    });
+
+    afterEach(() => jest.restoreAllMocks());
+
+    it.each<{ options: Options; scheme: string; configuration: string }>([
+      {
+        options: { scheme: 'ReleaseClient' },
+        scheme: 'ReleaseClient',
+        configuration: 'Release',
+      },
+      {
+        options: { scheme: 'ReleaseClient', device: 'generic' },
+        scheme: 'ReleaseClient',
+        configuration: 'Release',
+      },
+      {
+        options: { scheme: 'ReleaseClient', configuration: 'Debug' },
+        scheme: 'ReleaseClient',
+        configuration: 'Debug',
+      },
+      {
+        options: { scheme: true },
+        scheme: 'ReleaseClient',
+        configuration: 'Release',
+      },
+      { options: {}, scheme: 'ReactNativeProject', configuration: 'Debug' },
+    ])(
+      'passes resolved configuration $configuration to cache hooks for $options',
+      async ({ options, scheme, configuration }) => {
+        if (options.device === 'generic') {
+          jest.mocked(resolveDeviceAsync).mockResolvedValueOnce(null);
+        }
+        if (options.scheme === true) {
+          jest.spyOn(Prompts, 'selectAsync').mockResolvedValueOnce(scheme);
+        }
+
+        await runIosAsync('/', options);
+
+        const selection = { scheme, configuration };
+        expect(buildAsync).toHaveBeenCalledWith(expect.objectContaining(selection));
+        expect(resolveBuildCache).toHaveBeenCalledWith(
+          expect.objectContaining({
+            runOptions: expect.objectContaining(selection),
+          }),
+          {}
+        );
+        expect(uploadBuildCache).toHaveBeenCalledWith(
+          expect.objectContaining({
+            buildPath: '/mock_binary',
+            runOptions: expect.objectContaining(selection),
+          }),
+          {}
+        );
+        expect(calculateFingerprintHash).toHaveBeenCalledTimes(2);
+        for (const [props] of calculateFingerprintHash.mock.calls) {
+          expect(props.runOptions).toEqual(expect.objectContaining(selection));
+        }
+        expect(launchAppAsync).toHaveBeenCalledTimes(options.device === 'generic' ? 0 : 1);
+      }
+    );
+
+    it('launches the cached Release binary for a scheme with a Release Run configuration', async () => {
+      vol.fromJSON({ 'release.app/Info.plist': '', 'debug.app/Info.plist': '' }, '/');
+      resolveBuildCache.mockImplementation(async ({ runOptions }) =>
+        'configuration' in runOptions && runOptions.configuration === 'Release'
+          ? '/release.app'
+          : '/debug.app'
+      );
+      jest.mocked(getLaunchInfoForBinaryAsync).mockResolvedValueOnce({
+        bundleId: 'com.example.app',
+        schemes: ['example'],
+      });
+
+      await runIosAsync('/', { scheme: 'ReleaseClient' });
+
+      expect(launchAppAsync).toHaveBeenCalledWith(
+        '/release.app',
+        expect.anything(),
+        expect.anything(),
+        'com.example.app'
+      );
+      expect(buildAsync).not.toHaveBeenCalled();
+      expect(exportEagerAsync).not.toHaveBeenCalled();
+      expect(calculateFingerprintHash).toHaveBeenCalledTimes(1);
+      expect(uploadBuildCache).not.toHaveBeenCalled();
+    });
+  });
 
   it.each([
     { configuration: 'Release', mode: 'production' },
