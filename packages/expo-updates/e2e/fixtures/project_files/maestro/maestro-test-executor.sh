@@ -46,7 +46,7 @@ function cleanup()
     adb logcat -d -b all 2>/dev/null | grep -E "FATAL EXCEPTION|AndroidRuntime|beginning of crash" || echo "(none)"
     echo "===== adb logcat: app output, last 300 lines ====="
     adb logcat -d -b all 2>/dev/null \
-      | grep -vE "(Maestro|QueryController|AccessibilityNodeInfo) *:" \
+      | grep -vE "(Maestro|QueryController|AccessibilityNodeInfo|ReactNative) *:" \
       | tail -300 || true
     echo "===== end adb logcat ====="
   fi
