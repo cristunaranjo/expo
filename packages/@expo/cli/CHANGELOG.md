@@ -12,8 +12,8 @@
 
 - Remove Expo Router compatibility checks for `@react-navigation` packages. ([#50176](https://github.com/expo/expo/pull/50176) by [@Ubax](https://github.com/Ubax))
 - Fix app names in prebuild templates: derive project identifiers from the raw name in XML and plists ('A & B' gave 'AampB' in plists but 'AB' elsewhere), and escape display names for Android resources and plists. ([#49143](https://github.com/expo/expo/pull/49143) by [@vonovak](https://github.com/vonovak))
-- Resolve the iOS build configuration before loading env files in `expo run:ios`. Use the scheme's Run configuration when `--scheme` is passed without `--configuration`. ([#49555](https://github.com/expo/expo/pull/49555) by [@ramonclaudio](https://github.com/ramonclaudio))
-- Use the app's `react.debuggableVariants` list to select the env mode in `expo run:android`. ([#49555](https://github.com/expo/expo/pull/49555) by [@ramonclaudio](https://github.com/ramonclaudio))
+- Resolve the iOS build configuration before loading env files in `expo run:ios`. Configurations containing case-sensitive `Debug` use development and other valid configurations use production. ([#49555](https://github.com/expo/expo/pull/49555) by [@ramonclaudio](https://github.com/ramonclaudio))
+- Use the scheme's Run configuration when `--scheme` is passed without `--configuration` in `expo run:ios`. Pass the resolved configuration to build cache providers. ([#49555](https://github.com/expo/expo/pull/49555) by [@ramonclaudio](https://github.com/ramonclaudio))
 - Respect `--no-bundler` for Debug builds in `expo run:ios`. ([#49555](https://github.com/expo/expo/pull/49555) by [@ramonclaudio](https://github.com/ramonclaudio))
 
 ### 💡 Others
