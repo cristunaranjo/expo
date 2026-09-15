@@ -5,6 +5,7 @@
 ### 🛠 Breaking changes
 
 - Bundle source maps served by `expo start` and written by `expo export` are now [index maps](https://tc39.es/ecma426/#sec-index-source-map), as Metro now always emits them. ([#50135](https://github.com/expo/expo/pull/50135) by [@robhogan](https://github.com/robhogan))
+- Use the application's `react.debuggableVariants` list to select the env mode in `expo run:android`. (by [@ramonclaudio](https://github.com/ramonclaudio))
 
 ### 🎉 New features
 
