@@ -60,7 +60,7 @@ export async function createUpdatesResourcesAsync(args: string[] = process.argv.
           entryFileArg
         )
       : null,
-    createFingerprintForBuildAsync(platform, possibleProjectRoot, destinationDir, args[6]),
+    createFingerprintForBuildAsync(platform, possibleProjectRoot, destinationDir),
   ]);
 }
 

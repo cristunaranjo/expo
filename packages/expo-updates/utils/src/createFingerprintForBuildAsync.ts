@@ -4,13 +4,11 @@ import path from 'path';
 
 import { createFingerprintAsync } from './createFingerprintAsync';
 import { resolveWorkflowAsync, validateWorkflow } from './workflow';
-import { writeFingerprintInputPaths } from './writeFingerprintInputPaths';
 
 export async function createFingerprintForBuildAsync(
   platform: 'ios' | 'android',
   possibleProjectRoot: string,
-  destinationDir: string,
-  inputPathsFile?: string
+  destinationDir: string
 ): Promise<void> {
   // Remove projectRoot validation when we no longer support React Native <= 62
   let projectRoot;
@@ -30,9 +28,6 @@ export async function createFingerprintForBuildAsync(
   });
 
   const runtimeVersion = config[platform]?.runtimeVersion ?? config.runtimeVersion;
-  if (inputPathsFile) {
-    writeFingerprintInputPaths(inputPathsFile, projectRoot, []);
-  }
   if (!runtimeVersion || typeof runtimeVersion === 'string') {
     // normal runtime versions don't need fingerprinting
     return;
@@ -57,9 +52,6 @@ export async function createFingerprintForBuildAsync(
     const createdFingerprint = await createFingerprintAsync(projectRoot, platform, workflow, {});
     console.log(JSON.stringify(createdFingerprint));
     fingerprint = createdFingerprint;
-    if (inputPathsFile) {
-      writeFingerprintInputPaths(inputPathsFile, projectRoot, createdFingerprint.sources);
-    }
   }
 
   fs.writeFileSync(path.join(destinationDir, 'fingerprint'), fingerprint.hash);
