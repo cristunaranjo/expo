@@ -10,7 +10,7 @@
 
 ### 🐛 Bug fixes
 
-- [Android] Generate app config using the app's variant instead of the Constants library's build type. ([#49511](https://github.com/expo/expo/pull/49511) by [@ramonclaudio](https://github.com/ramonclaudio))
+- [Android] Generate native app config using the Constants library's build type. ([#49511](https://github.com/expo/expo/pull/49511) by [@ramonclaudio](https://github.com/ramonclaudio))
 - [iOS] Use production config by default when Updates native debugging embeds production JavaScript. ([#49511](https://github.com/expo/expo/pull/49511) by [@ramonclaudio](https://github.com/ramonclaudio))
 
 ### 💡 Others

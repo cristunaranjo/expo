@@ -14,8 +14,6 @@
 
 ### 💡 Others
 
-- [Android] Apply the Constants app-config script before application variants are created. ([#49511](https://github.com/expo/expo/pull/49511) by [@ramonclaudio](https://github.com/ramonclaudio))
-
 ## 58.0.1 — 2026-09-14
 
 _This version does not introduce any user-facing changes._
