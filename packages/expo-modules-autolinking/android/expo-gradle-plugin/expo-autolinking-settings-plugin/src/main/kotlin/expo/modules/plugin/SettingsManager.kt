@@ -9,7 +9,6 @@ import expo.modules.plugin.gradle.beforeProject
 import expo.modules.plugin.gradle.beforeRootProject
 import expo.modules.plugin.gradle.linkAarProject
 import expo.modules.plugin.gradle.linkBuildDependence
-import expo.modules.plugin.gradle.linkConstantsAppConfig
 import expo.modules.plugin.gradle.linkLocalMavenRepository
 import expo.modules.plugin.gradle.linkMavenRepository
 import expo.modules.plugin.gradle.linkPlugin
@@ -97,7 +96,6 @@ class SettingsManager(
 
   fun useExpoModules() {
     link()
-    settings.linkConstantsAppConfig(config)
 
     settings.gradle.beforeProject { project ->
       // Adds precompiled artifacts
